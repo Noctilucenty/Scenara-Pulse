@@ -5,17 +5,14 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError, OperationalError
 
-from app.db import get_db
+from app.db import get_db, get_scenara_db
 from app.routers.auth import get_current_admin
 from app.models.admin import PulseAdmin
 from app.models.analytics import AdminAuditLog, AdminUserNote
-
-_SCENARA_UNAVAILABLE = (ProgrammingError, OperationalError)
 from app.services.metrics import (
     get_overview_metrics,
     get_users_list,
@@ -33,11 +30,12 @@ from app.services.metrics import (
 
 router = APIRouter()
 
+_SCENARA_ERR = (ProgrammingError, OperationalError)
+
 
 def _audit(db: Session, admin_id: int, action: str, target_type: str = None, target_id=None, details: dict = None):
     db.add(AdminAuditLog(
-        admin_id=admin_id,
-        action=action,
+        admin_id=admin_id, action=action,
         target_type=target_type,
         target_id=str(target_id) if target_id else None,
         details=details or {},
@@ -51,9 +49,10 @@ def _audit(db: Session, admin_id: int, action: str, target_type: str = None, tar
 def overview(
     days: int = Query(30, ge=1, le=365),
     db: Session = Depends(get_db),
+    sdb: Session = Depends(get_scenara_db),
     admin: PulseAdmin = Depends(get_current_admin),
 ):
-    return get_overview_metrics(db, days)
+    return get_overview_metrics(db, sdb, days)
 
 
 # --- Users ---
@@ -64,20 +63,21 @@ def users(
     page_size: int = Query(50, ge=1, le=200),
     filter: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
-    db: Session = Depends(get_db),
+    sdb: Session = Depends(get_scenara_db),
     admin: PulseAdmin = Depends(get_current_admin),
 ):
-    return get_users_list(db, page, page_size, filter, search)
+    return get_users_list(sdb, page, page_size, filter, search)
 
 
 @router.get("/users/{user_id}")
 def user_detail(
     user_id: int,
     db: Session = Depends(get_db),
+    sdb: Session = Depends(get_scenara_db),
     admin: PulseAdmin = Depends(get_current_admin),
 ):
     _audit(db, admin.id, "view_user", "user", user_id)
-    result = get_user_detail(db, user_id)
+    result = get_user_detail(db, sdb, user_id)
     if not result:
         raise HTTPException(status_code=404, detail="User not found")
     return result
@@ -86,22 +86,23 @@ def user_detail(
 @router.patch("/users/{user_id}/toggle-active")
 def toggle_user_active(
     user_id: int,
+    sdb: Session = Depends(get_scenara_db),
     db: Session = Depends(get_db),
     admin: PulseAdmin = Depends(get_current_admin),
 ):
     try:
-        result = db.execute(
+        result = sdb.execute(
             text("UPDATE users SET is_active = NOT is_active WHERE id = :uid RETURNING is_active"),
             {"uid": user_id},
         ).fetchone()
-        db.commit()
+        sdb.commit()
         if not result:
             raise HTTPException(status_code=404, detail="User not found")
         _audit(db, admin.id, "toggle_user_active", "user", user_id, {"new_state": result.is_active})
         return {"ok": True, "is_active": result.is_active}
-    except _SCENARA_UNAVAILABLE:
-        db.rollback()
-        raise HTTPException(status_code=503, detail="Scenara database tables unavailable")
+    except _SCENARA_ERR:
+        sdb.rollback()
+        raise HTTPException(status_code=503, detail="Scenara database unavailable")
 
 
 @router.post("/users/{user_id}/notes")
@@ -127,9 +128,10 @@ def sessions(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
+    sdb: Session = Depends(get_scenara_db),
     admin: PulseAdmin = Depends(get_current_admin),
 ):
-    return get_sessions_list(db, page, page_size)
+    return get_sessions_list(db, sdb, page, page_size)
 
 
 # --- Markets ---
@@ -140,19 +142,19 @@ def markets(
     page_size: int = Query(50, ge=1, le=200),
     category: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
-    db: Session = Depends(get_db),
+    sdb: Session = Depends(get_scenara_db),
     admin: PulseAdmin = Depends(get_current_admin),
 ):
-    return get_markets_list(db, page, page_size, category, status)
+    return get_markets_list(sdb, page, page_size, category, status)
 
 
 @router.get("/markets/{market_id}")
 def market_detail(
     market_id: int,
-    db: Session = Depends(get_db),
+    sdb: Session = Depends(get_scenara_db),
     admin: PulseAdmin = Depends(get_current_admin),
 ):
-    result = get_market_detail(db, market_id)
+    result = get_market_detail(sdb, market_id)
     if not result:
         raise HTTPException(status_code=404, detail="Market not found")
     return result
@@ -169,20 +171,20 @@ def predictions(
     category: Optional[str] = Query(None),
     outcome: Optional[str] = Query(None),
     days: Optional[int] = Query(None),
-    db: Session = Depends(get_db),
+    sdb: Session = Depends(get_scenara_db),
     admin: PulseAdmin = Depends(get_current_admin),
 ):
-    return get_predictions_list(db, page, page_size, user_id, event_id, category, outcome, days)
+    return get_predictions_list(sdb, page, page_size, user_id, event_id, category, outcome, days)
 
 
 # --- Retention ---
 
 @router.get("/retention")
 def retention(
-    db: Session = Depends(get_db),
+    sdb: Session = Depends(get_scenara_db),
     admin: PulseAdmin = Depends(get_current_admin),
 ):
-    return get_retention_data(db)
+    return get_retention_data(sdb)
 
 
 # --- Funnel ---
@@ -190,9 +192,10 @@ def retention(
 @router.get("/funnel")
 def funnel(
     db: Session = Depends(get_db),
+    sdb: Session = Depends(get_scenara_db),
     admin: PulseAdmin = Depends(get_current_admin),
 ):
-    return get_funnel_data(db)
+    return get_funnel_data(db, sdb)
 
 
 # --- Leaderboard ---
@@ -201,10 +204,10 @@ def funnel(
 def leaderboard(
     limit: int = Query(50, ge=1, le=200),
     sort_by: str = Query("pnl"),
-    db: Session = Depends(get_db),
+    sdb: Session = Depends(get_scenara_db),
     admin: PulseAdmin = Depends(get_current_admin),
 ):
-    return get_leaderboard(db, limit, sort_by)
+    return get_leaderboard(sdb, limit, sort_by)
 
 
 # --- Real-time ---
@@ -212,9 +215,10 @@ def leaderboard(
 @router.get("/realtime")
 def realtime(
     db: Session = Depends(get_db),
+    sdb: Session = Depends(get_scenara_db),
     admin: PulseAdmin = Depends(get_current_admin),
 ):
-    return get_realtime_data(db)
+    return get_realtime_data(db, sdb)
 
 
 # --- Daily series ---
@@ -263,6 +267,7 @@ def audit_log(
 def export(
     type: str = Query("users"),
     db: Session = Depends(get_db),
+    sdb: Session = Depends(get_scenara_db),
     admin: PulseAdmin = Depends(get_current_admin),
 ):
     _audit(db, admin.id, f"export_{type}")
@@ -271,10 +276,11 @@ def export(
 
     try:
         if type == "users":
-            rows = db.execute(text("""
+            rows = sdb.execute(text("""
                 SELECT u.id, u.email, u.display_name, u.created_at, u.xp, u.level,
                        u.current_streak, u.best_streak, COALESCE(a.balance, 0) as balance,
-                       COUNT(p.id) as total_predictions, COALESCE(SUM(p.pnl), 0) as total_pnl
+                       COUNT(p.id) as total_predictions, COALESCE(SUM(p.pnl), 0) as total_pnl,
+                       0 as level
                 FROM users u
                 LEFT JOIN accounts a ON a.user_id = u.id
                 LEFT JOIN predictions p ON p.user_id = u.id
@@ -287,8 +293,8 @@ def export(
                                  r.current_streak, r.best_streak, r.balance, r.total_predictions, r.total_pnl])
 
         elif type == "predictions":
-            rows = db.execute(text("""
-                SELECT p.id, p.user_id, u.email, p.amount, p.entry_probability,
+            rows = sdb.execute(text("""
+                SELECT p.id, p.user_id, u.email, p.simulated_amount as amount, p.entry_probability,
                        p.payout_multiplier, p.pnl, p.created_at,
                        e.title as event_title, e.category, s.title as scenario_title
                 FROM predictions p
@@ -304,10 +310,9 @@ def export(
                                  r.payout_multiplier, r.pnl, r.created_at, r.event_title, r.category, r.scenario_title])
 
         elif type == "markets":
-            rows = db.execute(text("""
+            rows = sdb.execute(text("""
                 SELECT e.id, e.title, e.category, e.status, e.created_at, e.closes_at,
-                       COUNT(p.id) as total_predictions,
-                       COALESCE(SUM(p.amount), 0) as total_volume
+                       COUNT(p.id) as total_predictions, COALESCE(SUM(p.amount), 0) as total_volume
                 FROM events e
                 LEFT JOIN scenarios s ON s.event_id = e.id
                 LEFT JOIN predictions p ON p.scenario_id = s.id
@@ -320,10 +325,11 @@ def export(
                                  r.closes_at, r.total_predictions, r.total_volume])
         else:
             raise HTTPException(status_code=400, detail="Invalid export type. Use: users | predictions | markets")
-    except _SCENARA_UNAVAILABLE:
-        db.rollback()
+
+    except _SCENARA_ERR:
+        sdb.rollback()
         writer.writerow(["error"])
-        writer.writerow(["Scenara database tables are not yet available in this environment"])
+        writer.writerow(["Scenara database tables are not yet available"])
 
     output.seek(0)
     filename = f"scenara_{type}_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.csv"
