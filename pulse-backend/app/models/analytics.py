@@ -11,7 +11,7 @@ class AnalyticsEvent(Base):
     session_id = Column(String(64), index=True)
     event_type = Column(String(64), nullable=False, index=True)
     page_url = Column(String(512))
-    metadata = Column(JSON, default={})
+    event_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     device = Column(String(32))
     browser = Column(String(64))
