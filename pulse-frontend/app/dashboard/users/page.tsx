@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Search, Download, ChevronLeft, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { getUsers, downloadExport } from "@/lib/api";
-import { fmtDate, fmtCompact, cn } from "@/lib/utils";
+import { fmtDate, fmtCompact, fmtDuration, cn } from "@/lib/utils";
 import { toast } from "@/components/Toast";
 
 const FILTERS = [
@@ -114,7 +114,7 @@ export default function UsersPage() {
         <table className="w-full">
           <thead className="border-b border-border">
             <tr>
-              {["User", "Signed Up", "Predictions", "Win Rate", "PnL", "Balance", "Level", "Status"].map((h) => (
+              {["User", "Signed Up", "Avg Time on Site", "Predictions", "Win Rate", "PnL", "Balance", "Status"].map((h) => (
                 <th key={h} className="table-header text-left">{h}</th>
               ))}
             </tr>
@@ -125,7 +125,7 @@ export default function UsersPage() {
                   <tr key={i} className="border-b border-border/40">
                     {Array.from({ length: 8 }).map((_, j) => (
                       <td key={j} className="table-cell">
-                        <div className="h-3 bg-surface rounded animate-pulse w-16" />
+                        <div className={`h-3 bg-surface rounded animate-pulse ${j === 0 ? "w-28" : "w-16"}`} />
                       </td>
                     ))}
                   </tr>
@@ -143,6 +143,18 @@ export default function UsersPage() {
                       </Link>
                     </td>
                     <td className="table-cell text-text-muted text-xs">{fmtDate(u.signup_date)}</td>
+                    <td className="table-cell">
+                      {u.avg_session_seconds > 0 ? (
+                        <div>
+                          <span className="text-sm tabular-nums">{fmtDuration(u.avg_session_seconds)}</span>
+                          {u.session_count > 0 && (
+                            <p className="text-[11px] text-text-muted">{u.session_count} session{u.session_count !== 1 ? "s" : ""}</p>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-text-faint text-xs">—</span>
+                      )}
+                    </td>
                     <td className="table-cell tabular-nums">{u.total_predictions.toLocaleString()}</td>
                     <td className="table-cell">
                       <span className={u.win_rate >= 55 ? "text-green" : u.win_rate >= 45 ? "text-text" : "text-red"}>
@@ -156,9 +168,6 @@ export default function UsersPage() {
                     </td>
                     <td className="table-cell text-text-muted tabular-nums">
                       {fmtCompact(u.balance)}
-                    </td>
-                    <td className="table-cell">
-                      <span className="badge-violet">Lv {u.level}</span>
                     </td>
                     <td className="table-cell">
                       <span className={cn("badge capitalize", RETENTION_BADGE[u.retention_status] || "badge-violet")}>

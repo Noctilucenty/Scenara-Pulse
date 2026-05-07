@@ -63,10 +63,11 @@ def users(
     page_size: int = Query(50, ge=1, le=200),
     filter: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
     sdb: Session = Depends(get_scenara_db),
     admin: PulseAdmin = Depends(get_current_admin),
 ):
-    return get_users_list(sdb, page, page_size, filter, search)
+    return get_users_list(db, sdb, page, page_size, filter, search)
 
 
 @router.get("/users/{user_id}")

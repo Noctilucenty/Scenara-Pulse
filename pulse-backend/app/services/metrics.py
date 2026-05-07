@@ -116,6 +116,7 @@ def get_overview_metrics(db: Session, sdb: Session, days: int = 30) -> dict:
 # ---------------------------------------------------------------------------
 
 def get_users_list(
+    db: Session,
     sdb: Session,
     page: int = 1,
     page_size: int = 50,
@@ -172,6 +173,20 @@ def get_users_list(
             LIMIT :limit OFFSET :offset
         """), {**params, "limit": page_size, "offset": offset}).fetchall()
 
+        # Fetch avg session duration per user from Pulse DB
+        user_ids = [r.id for r in rows]
+        session_map: dict = {}
+        if user_ids:
+            session_rows = db.execute(text("""
+                SELECT user_id,
+                       ROUND(AVG(duration_seconds)) as avg_seconds,
+                       COUNT(*) as session_count
+                FROM pulse_user_sessions
+                WHERE user_id = ANY(:ids) AND duration_seconds IS NOT NULL
+                GROUP BY user_id
+            """), {"ids": user_ids}).fetchall()
+            session_map = {r.user_id: {"avg_seconds": int(r.avg_seconds or 0), "sessions": r.session_count} for r in session_rows}
+
         users = []
         for r in rows:
             total_preds = r.total_predictions or 0
@@ -186,6 +201,7 @@ def get_users_list(
             else:
                 retention = "churned"
 
+            sdata = session_map.get(r.id, {})
             users.append({
                 "id": r.id, "email": r.email, "display_name": r.display_name,
                 "signup_date": r.created_at.isoformat() if r.created_at else None,
@@ -198,6 +214,8 @@ def get_users_list(
                 "win_rate": round((wins / total_preds * 100) if total_preds > 0 else 0, 1),
                 "retention_status": retention,
                 "last_prediction": last_pred.isoformat() if last_pred else None,
+                "avg_session_seconds": sdata.get("avg_seconds", 0),
+                "session_count": sdata.get("sessions", 0),
             })
 
         return {"total": total, "page": page, "page_size": page_size, "users": users}
