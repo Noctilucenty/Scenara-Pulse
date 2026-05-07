@@ -8,11 +8,14 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError, OperationalError
 
 from app.db import get_db
 from app.routers.auth import get_current_admin
 from app.models.admin import PulseAdmin
 from app.models.analytics import AdminAuditLog, AdminUserNote
+
+_SCENARA_UNAVAILABLE = (ProgrammingError, OperationalError)
 from app.services.metrics import (
     get_overview_metrics,
     get_users_list,
@@ -86,15 +89,19 @@ def toggle_user_active(
     db: Session = Depends(get_db),
     admin: PulseAdmin = Depends(get_current_admin),
 ):
-    result = db.execute(
-        text("UPDATE users SET is_active = NOT is_active WHERE id = :uid RETURNING is_active"),
-        {"uid": user_id},
-    ).fetchone()
-    db.commit()
-    if not result:
-        raise HTTPException(status_code=404, detail="User not found")
-    _audit(db, admin.id, "toggle_user_active", "user", user_id, {"new_state": result.is_active})
-    return {"ok": True, "is_active": result.is_active}
+    try:
+        result = db.execute(
+            text("UPDATE users SET is_active = NOT is_active WHERE id = :uid RETURNING is_active"),
+            {"uid": user_id},
+        ).fetchone()
+        db.commit()
+        if not result:
+            raise HTTPException(status_code=404, detail="User not found")
+        _audit(db, admin.id, "toggle_user_active", "user", user_id, {"new_state": result.is_active})
+        return {"ok": True, "is_active": result.is_active}
+    except _SCENARA_UNAVAILABLE:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Scenara database tables unavailable")
 
 
 @router.post("/users/{user_id}/notes")
@@ -262,56 +269,61 @@ def export(
     output = io.StringIO()
     writer = csv.writer(output)
 
-    if type == "users":
-        rows = db.execute(text("""
-            SELECT u.id, u.email, u.display_name, u.created_at, u.xp, u.level,
-                   u.current_streak, u.best_streak, COALESCE(a.balance, 0) as balance,
-                   COUNT(p.id) as total_predictions, COALESCE(SUM(p.pnl), 0) as total_pnl
-            FROM users u
-            LEFT JOIN accounts a ON a.user_id = u.id
-            LEFT JOIN predictions p ON p.user_id = u.id
-            GROUP BY u.id, a.balance ORDER BY u.created_at DESC
-        """)).fetchall()
-        writer.writerow(["id", "email", "display_name", "signup_date", "xp", "level",
-                         "streak", "best_streak", "balance", "total_predictions", "total_pnl"])
-        for r in rows:
-            writer.writerow([r.id, r.email, r.display_name, r.created_at, r.xp, r.level,
-                             r.current_streak, r.best_streak, r.balance, r.total_predictions, r.total_pnl])
+    try:
+        if type == "users":
+            rows = db.execute(text("""
+                SELECT u.id, u.email, u.display_name, u.created_at, u.xp, u.level,
+                       u.current_streak, u.best_streak, COALESCE(a.balance, 0) as balance,
+                       COUNT(p.id) as total_predictions, COALESCE(SUM(p.pnl), 0) as total_pnl
+                FROM users u
+                LEFT JOIN accounts a ON a.user_id = u.id
+                LEFT JOIN predictions p ON p.user_id = u.id
+                GROUP BY u.id, a.balance ORDER BY u.created_at DESC
+            """)).fetchall()
+            writer.writerow(["id", "email", "display_name", "signup_date", "xp", "level",
+                             "streak", "best_streak", "balance", "total_predictions", "total_pnl"])
+            for r in rows:
+                writer.writerow([r.id, r.email, r.display_name, r.created_at, r.xp, r.level,
+                                 r.current_streak, r.best_streak, r.balance, r.total_predictions, r.total_pnl])
 
-    elif type == "predictions":
-        rows = db.execute(text("""
-            SELECT p.id, p.user_id, u.email, p.amount, p.entry_probability,
-                   p.payout_multiplier, p.pnl, p.created_at,
-                   e.title as event_title, e.category, s.title as scenario_title
-            FROM predictions p
-            JOIN scenarios s ON s.id = p.scenario_id
-            JOIN events e ON e.id = s.event_id
-            JOIN users u ON u.id = p.user_id
-            ORDER BY p.created_at DESC LIMIT 50000
-        """)).fetchall()
-        writer.writerow(["id", "user_id", "user_email", "amount", "entry_probability",
-                         "multiplier", "pnl", "created_at", "event_title", "category", "scenario"])
-        for r in rows:
-            writer.writerow([r.id, r.user_id, r.email, r.amount, r.entry_probability,
-                             r.payout_multiplier, r.pnl, r.created_at, r.event_title, r.category, r.scenario_title])
+        elif type == "predictions":
+            rows = db.execute(text("""
+                SELECT p.id, p.user_id, u.email, p.amount, p.entry_probability,
+                       p.payout_multiplier, p.pnl, p.created_at,
+                       e.title as event_title, e.category, s.title as scenario_title
+                FROM predictions p
+                JOIN scenarios s ON s.id = p.scenario_id
+                JOIN events e ON e.id = s.event_id
+                JOIN users u ON u.id = p.user_id
+                ORDER BY p.created_at DESC LIMIT 50000
+            """)).fetchall()
+            writer.writerow(["id", "user_id", "user_email", "amount", "entry_probability",
+                             "multiplier", "pnl", "created_at", "event_title", "category", "scenario"])
+            for r in rows:
+                writer.writerow([r.id, r.user_id, r.email, r.amount, r.entry_probability,
+                                 r.payout_multiplier, r.pnl, r.created_at, r.event_title, r.category, r.scenario_title])
 
-    elif type == "markets":
-        rows = db.execute(text("""
-            SELECT e.id, e.title, e.category, e.status, e.created_at, e.closes_at,
-                   COUNT(p.id) as total_predictions,
-                   COALESCE(SUM(p.amount), 0) as total_volume
-            FROM events e
-            LEFT JOIN scenarios s ON s.event_id = e.id
-            LEFT JOIN predictions p ON p.scenario_id = s.id
-            GROUP BY e.id ORDER BY e.created_at DESC
-        """)).fetchall()
-        writer.writerow(["id", "title", "category", "status", "created_at", "closes_at",
-                         "total_predictions", "total_volume"])
-        for r in rows:
-            writer.writerow([r.id, r.title, r.category, r.status, r.created_at,
-                             r.closes_at, r.total_predictions, r.total_volume])
-    else:
-        raise HTTPException(status_code=400, detail="Invalid export type. Use: users | predictions | markets")
+        elif type == "markets":
+            rows = db.execute(text("""
+                SELECT e.id, e.title, e.category, e.status, e.created_at, e.closes_at,
+                       COUNT(p.id) as total_predictions,
+                       COALESCE(SUM(p.amount), 0) as total_volume
+                FROM events e
+                LEFT JOIN scenarios s ON s.event_id = e.id
+                LEFT JOIN predictions p ON p.scenario_id = s.id
+                GROUP BY e.id ORDER BY e.created_at DESC
+            """)).fetchall()
+            writer.writerow(["id", "title", "category", "status", "created_at", "closes_at",
+                             "total_predictions", "total_volume"])
+            for r in rows:
+                writer.writerow([r.id, r.title, r.category, r.status, r.created_at,
+                                 r.closes_at, r.total_predictions, r.total_volume])
+        else:
+            raise HTTPException(status_code=400, detail="Invalid export type. Use: users | predictions | markets")
+    except _SCENARA_UNAVAILABLE:
+        db.rollback()
+        writer.writerow(["error"])
+        writer.writerow(["Scenara database tables are not yet available in this environment"])
 
     output.seek(0)
     filename = f"scenara_{type}_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.csv"
