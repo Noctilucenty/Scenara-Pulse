@@ -1,0 +1,170 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #06060f;
+  --surface: #0d0d1b;
+  --card: #111124;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--bg);
+  color: #e2e8f0;
+  font-family: "Inter", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Scrollbar ─────────────────────────────── */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(139, 92, 246, 0.3);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(139, 92, 246, 0.6);
+}
+
+/* ── Glass card ────────────────────────────── */
+@layer components {
+  .glass {
+    @apply bg-card border border-border rounded-xl backdrop-blur-sm;
+  }
+
+  .card {
+    @apply bg-card border border-border rounded-xl;
+  }
+
+  .glass-hover {
+    @apply glass transition-all duration-200 hover:border-border-bright hover:bg-card-hover;
+  }
+
+  .gradient-text {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, #8b5cf6, #3b82f6);
+  }
+
+  .gradient-border {
+    position: relative;
+  }
+
+  .gradient-border::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, #8b5cf6, #3b82f6);
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  .metric-card {
+    @apply glass-hover p-5 flex flex-col gap-1 animate-fade-in;
+  }
+
+  .btn-primary {
+    @apply px-4 py-2 rounded-lg text-sm font-medium text-white transition-all duration-150
+           bg-violet hover:bg-violet-dim active:scale-[0.98] disabled:opacity-50;
+  }
+
+  .btn-ghost {
+    @apply px-4 py-2 rounded-lg text-sm font-medium text-text-muted
+           hover:text-text hover:bg-surface transition-all duration-150 active:scale-[0.98];
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-green {
+    @apply badge bg-green/10 text-green;
+  }
+
+  .badge-red {
+    @apply badge bg-red/10 text-red;
+  }
+
+  .badge-amber {
+    @apply badge bg-amber/10 text-amber;
+  }
+
+  .badge-violet {
+    @apply badge bg-violet/10 text-violet;
+  }
+
+  .badge-blue {
+    @apply badge bg-blue/10 text-blue;
+  }
+
+  .table-row {
+    @apply border-b border-border hover:bg-surface/60 transition-colors duration-100;
+  }
+
+  .table-cell {
+    @apply px-4 py-3 text-sm;
+  }
+
+  .table-header {
+    @apply px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider;
+  }
+
+  .input {
+    @apply w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text
+           placeholder:text-text-muted focus:outline-none focus:border-violet/50
+           transition-colors duration-150;
+  }
+
+  .page-title {
+    @apply text-xl font-semibold text-text;
+  }
+
+  .section-label {
+    @apply text-xs font-medium text-text-muted uppercase tracking-wider;
+  }
+}
+
+/* ── Recharts overrides ─────────────────────── */
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: rgba(255, 255, 255, 0.04) !important;
+}
+
+.recharts-tooltip-wrapper {
+  outline: none !important;
+}
+
+.recharts-default-tooltip {
+  background: #1a1a2e !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 8px !important;
+  color: #e2e8f0 !important;
+}
+
+.recharts-tooltip-label {
+  color: #94a3b8 !important;
+  font-size: 12px !important;
+  margin-bottom: 4px !important;
+}
